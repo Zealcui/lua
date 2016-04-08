@@ -12,7 +12,7 @@ function loadUCR(file_name)
 
     train_targets = {}
     for i = 1, #train_set do
-        table.insert(train_targets, train_set[1][1])
+        table.insert(train_targets, train_set[i][1])
         train_set[i] = train_set[i]:sub(2, 25)
     end
     return train_set, train_targets
