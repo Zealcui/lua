@@ -16,6 +16,14 @@ function loadUCR(file_name)
         table.insert(train_targets, train_set[i][1] - 1) -- start from zero
         train_set[i] = train_set[i]:sub(2, len_train)
     end
-    return train_set, train_targets
+
+    n_train = #train_set
+    len_train = train_set[1]:size(1)
+    datasets = torch.Tensor(n_train, len_train)
+    for i = 1, n_train do
+        datasets[{i,{}}] = train_set[i]:resize(1,len_train)
+    end
+
+    return datasets, torch.Tensor(train_targets)
 end
 
