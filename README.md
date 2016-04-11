@@ -1,2 +1,2 @@
 # lua
-learn torch
+Sricpts for learning torch
