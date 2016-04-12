@@ -3,6 +3,16 @@ require 'cunn'
 dofile('loadUCR.lua')
 metrics = require 'metrics'
 
+cmd = torch.CmdLine()
+cmd:text()
+cmd:text("Simple LSTM RNN for UCR Time Series")
+cmd:text()
+cmd:text("Options")
+cmd:option('-max_iter',200, "Max epoch for training")
+cmd:text()
+
+opt = cmd:parse(arg)
+
 function predResult(val)
     res = val:clone()
     res[val:le(0)] = -1
@@ -17,6 +27,7 @@ nIndex = 10
 input_size = 6
 output_size = 1
 lr = 0.1
+
 
 
 -- build simple recurrent neural network
@@ -51,7 +62,7 @@ y[y:le(0.1)] = -1
 print('training...')
  
 local iteration = 1
-while iteration < 100 do     
+while iteration < opt.max_iter do     
     -- 1. create a sequence of rho time-steps
     local inputs, targets = {}, {}
     for step=1,rho do
