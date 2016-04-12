@@ -4,15 +4,26 @@ require 'cunn'
 dofile('loadUCR.lua')
 metrics = require 'metrics'
 
-cmd = torch.CmdLine()
-cmd:text()
-cmd:text("LSTM using Optim RNN for UCR Time Series")
-cmd:text()
-cmd:text("Options")
-cmd:option('-max_iter',200, "Max epoch for training")
-cmd:text()
+local function commandLine()
+    cmd = torch.CmdLine()
+    cmd:text()
+    cmd:text('LSTM using Optim RNN for UCR Time Series')
+    cmd:text()
+    cmd:text('Options')
+    cmd:option('-max_epoch',200, 'Max epoch for training')
+    cmd:option('-batch_size', 8, 'Mini Batch Size')
+    cmd:option('-rho', 4, 'RNN steps')
+    cmd:option('-hidden_size', 7, 'hidden layer size')
+    cmd:option('-input_size', 6, 'input size')
+    cmd:option('-learning_rate', 0.1, 'learning rate at t=0') 
+    cmd:option('-momentum', 0.9, 'momentum (SGD only)')
+    cmd:option('-decay_lr', 1e-4, 'learning rate decay')
+    cmd:option('')
+    cmd:option('')
+    cmd:text()
 
-opt = cmd:parse(arg)
+    opt = cmd:parse(arg)
+end
 
 function predResult(val)
     res = val:clone()
@@ -69,7 +80,7 @@ function loadData()
     
     -- validation set
     local n_valid = math.floor(data.xr:size(1) * 0.2)
-    local n_train = data.xr:size(1) = n_valid
+    local n_train = data.xr:size(1) - n_valid
     data['xv'] = data.xr:sub(n_train + 1, data.xr:size(1))
     data['yv'] = data.yr:sub(n_train + 1, data.yr:size(1))
     data['xr'] = data.xr:sub(1, n_train)
@@ -83,8 +94,34 @@ end
 
 -- training
 
-function train(model, criterion, W, grad, data)
+function train(model, criterion, W, grad, data, opt)
     model:training()
+
+    local n_train = data.xr:size(1)
+
+    local inputs, targets = {},{}
+
+    for step = 1, opt.rho do
+        inputs[step] = data[name_x][{{}, {opt.input_size * (step -1) + 1, opt.input_size * step}}]:cuda()
+        targets[step] = data[name_y]:cuda()
+    end
+    
+    --implement minibatch later
+
+    function feval(x)
+        assert(x == W)
+        grad:zero()
+     
+        local outputs = model:forward(inputs)
+        local f       = criterion:forward(outputs, targets)
+        local df_dw   = criterion:backward(outputs, targets)
+        model:backward(inputs, df_dw)
+
+        f = f / n_train -- adjust for train size
+
+        return f, grad
+    end
+    opt.optimizer(feval, W, opt.optim_config)
     
 end
 
@@ -158,17 +195,35 @@ print('Err: ' .. res/y:size(1))
 -- print((y - pred):mean())
 --
 --
-local function evaluation(type_eval, model, confusion)
+local function evaluation(type_eval, model, opt, confusion)
     if type_eval ~= 'r' and type_eval ~= 'e' and type_eval ~= 'v' then
         error('Unrecognized Evaluation Instruction')
     end
 
     model:evaluate()
 
-    local N = data['x', .. type_eval]:size(1)
+    local name_x = 'x' .. type_eval
+    local name_y = 'y' .. type_eval
+    local N = data[name_x]:size(1)
     local err = 0
 
-    local inputs = data
+    local inputs, targets = {},{}
+
+    for step = 1, opt.rho do
+        inputs[step] = data[name_x][{{}, {opt.input_size * (step -1) + 1, opt.input_size * step}}]:cuda()
+        targets[step] = data[name_y]:cuda()
+    end
+
+    local outputs = model:forward(inputs)
+    confusion:batchAdd(outputs[opt.rho]:resize(outputs[opt.rho]:size(1)), targets)
+
+    confusion:updateValids()
+
+    err = 1 - confusion.totalValid
+    confusion:zero()
+    return err
+end
+
 local function reportErr(data, model, confusion)
     local best_valid = math.huge
     local best_test = math.huge
@@ -192,21 +247,42 @@ local function reportErr(data, model, confusion)
                             best_epoch, best_test, best_valid))
     end
 end
+
+local function optimConfig(opt)
+    opt.optim_oconfig = {
+        learningRate      = opt.learning_rate,
+        learningRateDecay = opt.decay_lr,
+        weightDecay       = opt.l2reg,
+        momentum          = opt.momentum
+    }
+    opt.optimizer = optim.sgd
+end
 -------------------------------------------------------------------------------
 --                           Main Function                                   --
 -------------------------------------------------------------------------------
+
 
 local function main()
     local opt = commandLine()
     torch.setdefaulttensortype('torch.FloatTensor')
     local data = loadData()
+    optimConfig(opt)
     
     local model, criterion = createModel()
+    print('model ')
+    print(model)
 
     local confusion = optim.ConfusionMatrix(1)
     local W, grad = model:getParameters()
 
     print('the number of parameters is ' .. W:nElement())
 
-    local report = reportErr(data, model, confusion)
+    local report = reportErr(data, model,opt, confusion)
+    
+    for t = 1, opt.max_epoch do
+        train(model, criterion, W, grad, data, opt)
+        report(t)
+
+        collectgarbage()
+    end
 end
