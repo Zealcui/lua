@@ -1,2 +1,2 @@
 # lua
-Sricpts for learning torch
+Sricpts for learning torch, rnn

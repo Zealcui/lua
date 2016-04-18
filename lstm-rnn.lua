@@ -53,6 +53,7 @@ seqC:cuda()
 -- build dummy dataset (task is to predict next item, given previous)
 x, y= loadUCR('ItalyPowerDemand_TRAIN')
 y[y:le(0.1)] = -1
+y[y:ge(0.1)] = 1
 
 -- x:cuda()
 -- y:cuda()
