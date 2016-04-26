@@ -4,6 +4,7 @@ require 'cunn'
 dofile('loadGesture.lua')
 metrics = require 'metrics'
 
+-- processed data
 local function commandLine()
     cmd = torch.CmdLine()
     cmd:text()
@@ -11,14 +12,14 @@ local function commandLine()
     cmd:text()
     cmd:text('Options')
     cmd:option('-seed', 1234, 'fixed input seed for repeatable experiments')
-    cmd:option('-max_epoch',200, 'Max epoch for training')
+    cmd:option('-max_epoch',4000, 'Max epoch for training')
     cmd:option('-batch_size', 8, 'Mini Batch Size')
     --cmd:option('-rho', 4, 'RNN steps')
     cmd:option('-rho', 5, 'RNN steps')
-    cmd:option('-hidden_size', 90, 'hidden layer size')
-    cmd:option('-input_size', 60, 'input size')
+    cmd:option('-hidden_size', 60, 'hidden layer size')
+    cmd:option('-input_size', 114, 'input size')
     cmd:option('-output_size', 8, 'output size')
-    cmd:option('-learning_rate', 0.1, 'learning rate at t=0') 
+    cmd:option('-learning_rate', 0.001, 'learning rate at t=0') 
     cmd:option('-momentum', 0.9, 'momentum (SGD only)')
     cmd:option('-decay_lr', 1e-4, 'learning rate decay')
     cmd:text()
@@ -48,7 +49,7 @@ local function createModel(opt)
     local rnn = nn.Sequential()
             :add(nn.Linear(input_size, hidden_size))
             :add(nn.LSTM(hidden_size, hidden_size))
-            :add(nn.LSTM(hidden_size, hidden_size))
+            --:add(nn.LSTM(hidden_size, hidden_size))
             :add(nn.Linear(hidden_size, output_size))
             :add(nn.LogSoftMax())
 
@@ -67,6 +68,13 @@ local function loadData()
     --local xe, ye= loadUCR('ItalyPowerDemand_TEST')
     local xe, ye= loadGesture('testset.txt')
 
+    local idx = torch.randperm(#xr)
+    local _x, _y = {}, {}
+    for i = 1, #xr do
+        _x[i], _y[i] = xr[idx[i]], yr[idx[i]]
+    end
+    xr, yr = _x, _y
+
     local data = {}
     data['xr'] = xr
     data['yr'] = yr
@@ -83,16 +91,16 @@ end
 
 function train(model, criterion, W, grad, data, opt)
     model:training()
-    model:forget()
 
     local n_train = #data.xr
 
 
+    idx = torch.randperm(n_train) --shuffle the input
     for idx_ts = 1, n_train do
         local inputs, targets = {},{}
-        for step = 1, data.xr[idx_ts]:size(1)/60 do
-            inputs[step] = data.xr[idx_ts][{{opt.input_size * (step -1) + 1, opt.input_size * step}}]:cuda()
-            targets[step] = data.yr[idx_ts]
+        for step = 1, math.floor(data.xr[idx[idx_ts]]:size(1)/opt.input_size) do
+            inputs[step] = data.xr[idx[idx_ts]][{{opt.input_size * (step -1) + 1, opt.input_size * step}}]:cuda()
+            targets[step] = data.yr[idx[idx_ts]]
         end
         
         --implement minibatch later
@@ -106,11 +114,12 @@ function train(model, criterion, W, grad, data, opt)
             local gradOut    = criterion:backward(prediction, targets)
             model:backward(inputs, gradOut)
 
-            loss_w = loss_w / n_train -- adjust for train size
+            loss_w = loss_w  -- adjust for train size
 
             return loss_w, grad
         end
         opt.optimizer(feval, W, opt.optim_config)
+        model:forget()
     end
         
     -- local prediction = model:forward(inputs)
@@ -128,8 +137,7 @@ local function evaluation(type_eval, data, model, opt, confusion)
         error('Unrecognized Evaluation Instruction')
     end
 
-    --model:evaluate()
-    model:forget()
+    model:evaluate()
 
     local name_x = 'x' .. type_eval
     local name_y = 'y' .. type_eval
@@ -140,29 +148,32 @@ local function evaluation(type_eval, data, model, opt, confusion)
     local datasets = {}
     
     for ind_ts = 1 , #input do 
+        model:forget()
         local inputs, targets = {}, data[name_y][ind_ts]
         local len_ts = input[ind_ts]:size(1)
-        for step = 1, len_ts/60 do 
+        for step = 1, math.floor(len_ts/opt.input_size) do 
             inputs[step] = input[ind_ts][{{opt.input_size * (step -1) + 1, opt.input_size * step}}]:cuda()
         end
 
         local outputs = model:forward(inputs)
-        local pred = outputs[len_ts/60]
+        local pred = outputs[math.floor(len_ts/opt.input_size)]
         --pred = predResult(pred:resize(n_pred))
 
         confusion:add(pred, targets)
+        --print(pred)
+        --print(targets)
 
         confusion:updateValids()
         -- print(confusion)
 
-        err = err + 1 - confusion.totalValid
+        --err = err + 1 - confusion.totalValid
         -- confusion:zero()
         --
         --for i = 1, n_pred do
         --    err = err + math.abs(pred[i] - targets[i])/2
         --end
     end
-    return err/#input
+    return 1 - confusion.totalValid
 end
 
 local function reportErr(data, model, opt, confusion)
@@ -216,7 +227,7 @@ local function main()
     print('model ')
     print(model)
 
-    local confusion = optim.ConfusionMatrix(1)
+    local confusion = optim.ConfusionMatrix(8)
     local W, grad = model:getParameters()
 
     print('the number of parameters is ' .. W:nElement())
